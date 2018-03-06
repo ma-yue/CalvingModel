@@ -27,7 +27,7 @@ rho_i = 910               # kg/m3 ice density
 rho_w = 1020              # kg/m3 seawater density
 g = 9.8                   # m/s2
 noblowup = 1E-14          # a small constant preventing inf viscosity values
-meltrate = 0.3            # m/day avg, 0 at water line, 2 at the bed, linear gradient
+meltrate = 0.3            # m/day avg, 0 at water line, 0.6 at the bed, linear gradient
 grounding = length-2*gridsize     # init. grounding line position guess (needed for re-meshing)
 cliff = length-2*gridsize         # init. cliff position guess (needed for surface crevasse placing)
 
