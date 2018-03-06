@@ -1,2 +1,2 @@
-# Crevasses
-model crevasse evolution in glaciers
+# CalvingModel
+Two dimensional full Stokes flow line model of grounded tidewater glaciers. Initial shape is rectangular but the glacier is allowed to evolve, i.e. the outline of the mesh is being updated each time step. Both tensile and shear stresses are recorded as well as hypothetical paths of crevasse growth according to pre-defined criteria. Visualizations of the mesh and stress fields can be realized using Paraview, a Python based software.
