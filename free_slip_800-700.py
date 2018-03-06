@@ -12,12 +12,12 @@ import os
 
 
 # Physical Constants
-steps = 2*365             # steps
+steps = 2*365             # quarter days
 n = 6.0                   # a constant
 thickness = 800.0         # thickness of mesh
 length = n*thickness      # length of mesh
 depth = 700.0             # m ice under water
-gridsize = 16.0           # m resolution
+gridsize = 16.0            # m resolution
 
 B0 = 15.77                # Pa*day^1/3
 temp = 253.0              # K temperature
@@ -35,6 +35,7 @@ domain_vertices = [Point(0.0, 0.0),
                    Point(length, thickness),
                    Point(length, 0.0),
                    Point(0.0, 0.0)]
+
 
 # Generate mesh
 PolygonalMeshGenerator.generate(mesh, domain_vertices, gridsize)
@@ -94,7 +95,6 @@ class right_below(SubDomain):
 gamma_5 = right_below()
 gamma_5.mark(boundary_parts, 5)
 
-
 # No-slip boundary condition at bottom
 bcb1 = DirichletBC(system.sub(0), Constant((0.0,0.0)), boundary_parts, 1)
 
@@ -132,7 +132,7 @@ waterpressure = Expression(("A*B*(D - x[1])","0.0"),A = rho_w, B = g, D = depth)
 
 # Define closest_vertex for a point
 def closest_vertex(point):
-    d = 2.*gridsize
+    d = 3.*gridsize
     for v in vertices(mesh):
         deltax = x[v.index()]-point[0]
         deltaz = z[v.index()]-point[1]
@@ -140,8 +140,8 @@ def closest_vertex(point):
             distance = math.hypot(deltax,deltaz)
             if distance < d:
                 d = distance
-                index = v.index()
-    return index
+                id = v.index()
+    return id
 
 # Create empty lists to store info for propagation paths
 # basal
@@ -165,18 +165,19 @@ for k in range(len(surface[0])):
 
 # Sampling the bottom and surface to initiate crevasses
 for j in range(len(basal[0])):
-    basal[:,j] = [length-0.1*thickness*(j+1),0]
+    basal[:,j] = [length-0.2*thickness*(j+1),0]
     bindex[j].append(closest_vertex(basal[:,j]))
     bverts_x[j].append(x[bindex[j][0]])
     bverts_z[j].append(z[bindex[j][0]])
-
+    
 for j in range(len(surface[0])):
-    surface[:,j] = [length-0.1*thickness*(j+1),thickness]
+    surface[:,j] = [length-0.2*thickness*(j+1),thickness]
     sindex[j].append(closest_vertex(surface[:,j]))
     sverts_x[j].append(x[sindex[j][0]])
     sverts_z[j].append(z[sindex[j][0]])
 
 #start = timeit.default_timer()
+
 
 for day in range(steps):
     # Define variational problem
@@ -202,7 +203,7 @@ for day in range(steps):
     eps = 1.0             # error measure ||u-u_k|| and ||p-p_k||
     tol = 1.0E-6          # tolerance
     count = 0             # iteration counter
-    max = 30              # max number of iterations allowed
+    max = 32              # max number of iterations allowed
 
     while eps>tol and count<max:
         count += 1
@@ -235,7 +236,7 @@ for day in range(steps):
     u,p = w.split()
     ux,uz = u.split(deepcopy=True)
     tensor = TensorFunctionSpace(mesh, "Lagrange", degree)
-
+    
     # Full stress
     sigma = project(nu(u,temp)*epsilon(u)-p*Identity(tensor.cell().topological_dimension()),tensor)
     sigmaxx = Function(scalar)
@@ -279,10 +280,10 @@ for day in range(steps):
                         propagation = eigenvector[:,0]
                     else:
                         break
-
+        
             if propagation[1] < 0:
                 propagation *= -1
-        
+
             propagation *= gridsize
             bindex[j].append(closest_vertex([x[bindex[j][k-1]],z[bindex[j][k-1]]]+propagation))
 
@@ -307,7 +308,7 @@ for day in range(steps):
             
             propagation *= gridsize
             sindex[j].append(closest_vertex([x[sindex[j][k-1]],z[sindex[j][k-1]]]+propagation))
-
+        
     # Save crevasse paths
     for i in range(len(basal[0])):
         for l in range(len(bindex[i])):
@@ -349,7 +350,7 @@ for day in range(steps):
     #open_vector = Function(vector)
     #assign(open_vector.sub(0), open_vector_x)
     #assign(open_vector.sub(1), open_vector_z)
-
+    
     # Save mesh and solution to file
     File("mesh"+str(day+1)+".xml") << mesh
     File("tensile"+str(day+1)+".pvd") << sigma1
@@ -366,20 +367,81 @@ for day in range(steps):
     assign(du.sub(0), dux)
     assign(du.sub(1), duz)
     mesh.move(du)
+    
+    # Obtain x,z coordinates of vertices
+    x = mesh.coordinates()[:,0]
+    z = mesh.coordinates()[:,1]
 
+    # Mark boundary vertices
+    bdry_label = []
+    bdry_v = []
+    bdry_order = []
+    for v in vertices(mesh):
+        for f in facets(v):
+            if f.exterior():
+                bdry_v.append(v)
+                bdry_label.append(v.index())
+                break
+
+    # Ordering the boundary vertices
+    bdry_no = len(bdry_v)
+    head = bdry_v[0]
+    bdry_order.append(head)                  # keep in mind that here head is a fenics object so head.index() is
+    count = 1                                # different from the bdry_label.index(...) below
+    while count < bdry_no:
+        flag = 0
+        id = bdry_label.index(head.index())   # returns the lowest index in list that head.index() appears
+        del bdry_label[id]
+        del bdry_v[id]
+        for f in facets(head):
+            if f.exterior():
+                for v in vertices(f):
+                    if v in bdry_v:
+                        bdry_order.append(v)
+                        head = v
+                        flag = 1
+                        count += 1
+                        break
+            if flag == 1:
+                break
+
+    # Deleting all the nodes on the bed except (0,0) and the grounding line
+    domain_vertices = []
+    marked = []
+    grounding = length-gridsize
+    for v in bdry_order:
+        k = v.index()
+        if x[k] > 0.1*gridsize and z[k] < 0.1 and x[k] > grounding:
+            grounding = x[k]
+            z[k] = 0
+        if z[k] < 0:
+            z[k] = 0
+    for v in bdry_order:
+        k = v.index()
+        if x[k] > 0.1*gridsize and z[k] < 0.1 and x[k] < grounding:
+            del v
+            continue
+        domain_vertices.append(Point(x[k],z[k]))
+
+    # Generate mesh
+    PolygonalMeshGenerator.generate(mesh, domain_vertices, gridsize)
+
+    # Obtain x,z coordinates of vertices
+    x = mesh.coordinates()[:,0]
+    z = mesh.coordinates()[:,1]
+
+    # Define function spaces
     scalar = FunctionSpace(mesh, "CG", degree)
     vector = VectorFunctionSpace(mesh, "CG", degree)
     system = vector * scalar
 
-#    if (day+1)%50 == 0:
-#        print day
-#        mesh = refine(mesh)
-#        plt.figure()
-#        plot(mesh)
-#        plt.savefig('mesh'+str(day+1)+'.png')
-#
-    x = mesh.coordinates()[:,0]
-    z = mesh.coordinates()[:,1]
+#    # Plot cell_domains
+#    fig = plt.figure()
+#    ax = fig.add_subplot(111,aspect=2)
+#    ax.set_xlim([-100,5500])
+#    ax.set_ylim([-10,918])
+#    ax.plot(bdry_vertices_x,bdry_vertices_z)
+#    fig.savefig(str(day)+'.pdf',dpi=300,format='pdf')
 
     # Create mesh function over cell facets
     boundary_parts = FacetFunction('size_t', mesh, 0)
@@ -387,20 +449,25 @@ for day in range(steps):
     
     # DOLFIN_EPS = 3e-16
     # Mark right below water boundary as subdomain 5
-    right_below = [f for f in facets(mesh)
-                   if (f.exterior() and (f.midpoint().y()<depth))]
+    right_below = []
+    for f in facets(mesh):
+        count = 0
+        for c in cells(f):
+            count = count + 1
+        if count == 1 and f.midpoint().y()<depth:
+            right_below.append(f)
     for rb in right_below:
         boundary_parts[rb] = 5
 
     # Mark bottom boundary facets as subdomain 1
     bottom = [f for f in facets(mesh)
-              if (f.exterior() and (f.midpoint().y()<1E-3))]
+              if f.midpoint().y()<1E-3]
     for b in bottom:
         boundary_parts[b] = 1
 
     # Mark left boundary as subdomain 3
     left = [f for f in facets(mesh)
-            if (f.exterior() and (f.midpoint().x()<1E-3))]
+            if f.midpoint().x()<1E-3]
     for l in left:
         boundary_parts[l] = 3
 
@@ -418,8 +485,46 @@ for day in range(steps):
     
     # Collect Dirichlet boundary conditions
     bcs = [bcb2, bcl]
-
+    
+    
     # Define new measures associated with the interior domains and
     # exterior boundaries
     ds = Measure("ds")[boundary_parts]
 
+
+    # Create empty lists to store info for propagation paths
+    # basal
+    bindex = []
+    basal = np.zeros([2,2])
+    bverts_x = []
+    bverts_z = []
+    for k in range(len(basal[0])):
+        bindex.append([])
+        bverts_x.append([])
+        bverts_z.append([])
+    # surface
+    sindex = []
+    surface = np.zeros([2,2])
+    sverts_x = []
+    sverts_z = []
+    for k in range(len(surface[0])):
+        sindex.append([])
+        sverts_x.append([])
+        sverts_z.append([])
+
+    # Sampling the bottom and surface to initiate crevasses
+    for j in range(len(basal[0])):
+        basal[:,j] = [grounding-0.2*thickness*(j+1),0]
+        bindex[j].append(closest_vertex(basal[:,j]))
+        bverts_x[j].append(x[bindex[j][0]])
+        bverts_z[j].append(z[bindex[j][0]])
+
+    for j in range(len(surface[0])):
+        surface[:,j] = [grounding-0.2*thickness*(j+1),thickness/2]
+        for v in vertices(mesh):
+            if abs(v.x(0)-surface[:,j][0]) < gridsize:
+                if v.x(1) > surface[:,j][1]:
+                    surface[:,j][1] = v.x(1)
+        sindex[j].append(closest_vertex(surface[:,j]))
+        sverts_x[j].append(x[sindex[j][0]])
+        sverts_z[j].append(z[sindex[j][0]])
